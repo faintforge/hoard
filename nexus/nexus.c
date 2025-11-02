@@ -1,5 +1,48 @@
 #include "nexus.h"
 
+// =============================================================================
+// LOGGER
+// =============================================================================
+
+#define MAX_LOGGER_CALLBACK_COUNT 16
+
+typedef struct _logger_callback_t _logger_callback_t;
+struct _logger_callback_t {
+    nexus_logger_callback_func_t func;
+    void* userdata;
+};
+
+static _logger_callback_t g_logger_callbacks[MAX_LOGGER_CALLBACK_COUNT] = {0};
+static uint32_t g_logger_callback_count = 0;
+
+void nexus_logger_register_callback(nexus_logger_callback_func_t func, void* userdata) {
+    NEXUS_ASSERT_MSG(g_logger_callback_count < MAX_LOGGER_CALLBACK_COUNT, "Maximum amount of logger callbacks of %d has been reached.", MAX_LOGGER_CALLBACK_COUNT);
+    g_logger_callbacks[g_logger_callback_count] = (_logger_callback_t) {
+        .func = func,
+        .userdata = userdata,
+    };
+    g_logger_callback_count++;
+}
+
+void _nexus_log(nexus_log_level_t level, const char* file, int32_t line, const char* message, ...) {
+    for (uint32_t i = 0; i < g_logger_callback_count; i++) {
+        nexus_log_event_t event = {
+            .level = level,
+            .file = file,
+            .line = line,
+            .message = message,
+        };
+        va_start(event.args, message);
+        _logger_callback_t callback = g_logger_callbacks[i];
+        callback.func(event, callback.userdata);
+        va_end(event.args);
+    }
+}
+
+// =============================================================================
+// ARENA ALLOCATOR
+// =============================================================================
+
 nexus_arena_t nexus_arena_create(nexus_allocator_t allocator, size_t capacity) {
     return (nexus_arena_t) {
         .allocator = allocator,
