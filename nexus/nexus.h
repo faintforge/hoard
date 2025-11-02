@@ -2,6 +2,7 @@
 #define NEXUS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 // =============================================================================
 // ALLOCATOR INTERFACE
@@ -28,5 +29,29 @@ struct nexus_allocator_t {
 // =============================================================================
 
 #define NEXUS_UNUSED(var) (void) var
+
+// TODO: Implement assert
+#define NEXUS_ASSERT(cond)
+
+// =============================================================================
+// ARENA ALLOCATOR
+// =============================================================================
+
+typedef struct nexus_arena_t nexus_arena_t;
+struct nexus_arena_t {
+    nexus_allocator_t allocator;
+    uint8_t* memory;
+    size_t capacity;
+    size_t position;
+    size_t last_position;
+};
+
+extern nexus_arena_t nexus_arena_create(nexus_allocator_t allocator, size_t capacity);
+extern void nexus_arena_destroy(nexus_arena_t* arena);
+extern nexus_allocator_t nexus_arena_allocator(nexus_arena_t* arena);
+
+extern void* nexus_arena_push(nexus_arena_t* arena, size_t size);
+extern void* nexus_arena_push_aligned(nexus_arena_t* arena, size_t size, size_t align);
+extern void nexus_arena_reset(nexus_arena_t* arena);
 
 #endif // NEXUS_H
