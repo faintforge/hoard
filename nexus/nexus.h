@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 // =============================================================================
 // ALLOCATOR INTERFACE
@@ -112,5 +113,64 @@ extern nexus_allocator_t nexus_arena_allocator(nexus_arena_t* arena);
 extern void* nexus_arena_push(nexus_arena_t* arena, size_t size);
 extern void* nexus_arena_push_aligned(nexus_arena_t* arena, size_t size, size_t align);
 extern void nexus_arena_reset(nexus_arena_t* arena);
+
+// =============================================================================
+// DYNAMIC ARRAY
+// =============================================================================
+
+#define NEXUS_DYN_ARR(T) T*
+
+extern void* nexus_dyn_arr_create(nexus_allocator_t allocator, size_t element_size);
+extern void nexus_dyn_arr_destroy(void** dyn_arr);
+extern size_t nexus_dyn_arr_length(const void* dyn_arr);
+
+extern void nexus_dyn_arr_insert_arr(void** dyn_arr, size_t index, const void* arr, size_t arr_length);
+extern void nexus_dyn_arr_remove_arr(void** dyn_arr, size_t index, size_t count, void* output);
+
+extern void nexus_dyn_arr_insert(void** dyn_arr, size_t index, const void* value);
+extern void nexus_dyn_arr_remove(void** dyn_arr, size_t index, void* output);
+
+extern void nexus_dyn_arr_insert_fast(void** dyn_arr, size_t index, const void* value);
+extern void nexus_dyn_arr_remove_fast(void** dyn_arr, size_t index, void* output);
+
+extern void nexus_dyn_arr_push(void** dyn_arr, const void* value);
+extern void nexus_dyn_arr_pop(void** dyn_arr, void* output);
+
+#ifndef NEXUS_NO_EXTS
+
+#define NEXUS_DYN_ARR_INSERT_ARR(dyn_arr, index, array, array_length) nexus_dyn_arr_insert_arr((void**) &dyn_arr, index, array, array_length);
+#define NEXUS_DYN_ARR_REMOVE_ARR(dyn_arr, index, count, output) nexus_dyn_arr_remove_arr((void**) &dyn_arr, index, count, output);
+
+#define NEXUS_DYN_ARR_INSERT(dyn_arr, index, value) ({ \
+        __typeof__(*(dyn_arr)) tmp = value; \
+        nexus_dyn_arr_insert((void**) &dyn_arr, index, &tmp); \
+    })
+#define NEXUS_DYN_ARR_REMOVE(dyn_arr, index) ({ \
+        __typeof__(*(dyn_arr)) result; \
+        nexus_dyn_arr_remove((void**) &dyn_arr, index, &result); \
+        result; \
+    })
+
+#define NEXUS_DYN_ARR_INSERT_FAST(dyn_arr, index, value) ({ \
+        __typeof__(*(dyn_arr)) tmp = value; \
+        nexus_dyn_arr_insert_fast((void**) &dyn_arr, index, &tmp); \
+    })
+#define NEXUS_DYN_ARR_REMOVE_FAST(dyn_arr, index) ({ \
+        __typeof__(*(dyn_arr)) result; \
+        nexus_dyn_arr_remove_fast((void**) &dyn_arr, index, &result); \
+        result; \
+    })
+
+#define NEXUS_DYN_ARR_PUSH(dyn_arr, value) ({ \
+        __typeof__(*(dyn_arr)) tmp = value; \
+        nexus_dyn_arr_push((void**) &dyn_arr, &tmp); \
+    })
+#define NEXUS_DYN_ARR_POP(dyn_arr) ({ \
+        __typeof__(*(dyn_arr)) result; \
+        nexus_dyn_arr_pop((void**) &dyn_arr, &result); \
+        result; \
+    })
+
+#endif // NEXUS_NO_EXTS
 
 #endif // NEXUS_H

@@ -1,5 +1,8 @@
 #include "nexus.h"
 
+// TODO: Remove this CRT dependency
+#include <string.h>
+
 // =============================================================================
 // LOGGER
 // =============================================================================
@@ -134,4 +137,166 @@ void* nexus_arena_push(nexus_arena_t* arena, size_t size) {
 void nexus_arena_reset(nexus_arena_t* arena) {
     arena->position = 0;
     arena->last_position = 0;
+}
+
+// =============================================================================
+// DYNAMIC ARRAY
+// =============================================================================
+
+#define _DYN_ARR_INITIAL_SIZE 8
+
+typedef struct _dyn_arr_header_t _dyn_arr_header_t;
+struct _dyn_arr_header_t {
+    nexus_allocator_t allocator;
+    size_t element_size;
+    size_t capacity;
+    size_t length;
+};
+
+static inline void* _header_to_dyn_arr(_dyn_arr_header_t* header) {
+    return &header[1];
+}
+
+static inline _dyn_arr_header_t* _dyn_arr_to_header(const void* array) {
+    return &((_dyn_arr_header_t*) array)[-1];
+}
+
+void* nexus_dyn_arr_create(nexus_allocator_t allocator, size_t element_size) {
+    _dyn_arr_header_t* header = NEXUS_ALLOC(allocator, sizeof(_dyn_arr_header_t) + element_size * _DYN_ARR_INITIAL_SIZE);
+    *header = (_dyn_arr_header_t) {
+        .allocator = allocator,
+        .element_size = element_size,
+        .capacity = _DYN_ARR_INITIAL_SIZE,
+        .length = 0,
+    };
+    return _header_to_dyn_arr(header);
+}
+
+void nexus_dyn_arr_destroy(void** dyn_arr) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_FREE(header->allocator, header, sizeof(_dyn_arr_header_t) + header->element_size * _DYN_ARR_INITIAL_SIZE);
+    *dyn_arr = NULL;
+}
+
+size_t nexus_dyn_arr_length(const void* dyn_arr) {
+    return _dyn_arr_to_header(dyn_arr)->length;
+}
+
+static void _dyn_arr_ensure_capacity(void** dyn_arr, size_t length) {
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    if (header->capacity >= header->length + length) {
+        return;
+    }
+    size_t prev_capacity = header->capacity;
+    size_t new_capacity = header->capacity;
+    while (new_capacity < header->length + length) {
+        new_capacity *= 2;
+    }
+    NEXUS_REALLOC(header->allocator,
+            header,
+            sizeof(_dyn_arr_header_t) + prev_capacity * header->element_size,
+            sizeof(_dyn_arr_header_t) + new_capacity * header->element_size);
+    *dyn_arr = _header_to_dyn_arr(header);
+}
+
+void nexus_dyn_arr_insert_arr(void** dyn_arr, size_t index, const void* arr, size_t arr_length) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_ASSERT_MSG(index <= header->length, "Index out of bounds");
+    _dyn_arr_ensure_capacity(dyn_arr, arr_length);
+
+    void *end = (uint8_t*) (*dyn_arr) + (index+arr_length)*header->element_size;
+    void *dest = (uint8_t*) (*dyn_arr) + index*header->element_size;
+
+    memmove(end, dest, (header->length - index)*header->element_size);
+    if (arr == NULL) {
+        memset(dest, 0, arr_length*header->element_size);
+    } else {
+        memcpy(dest, arr, arr_length*header->element_size);
+    }
+
+    header->length += arr_length;
+}
+
+void nexus_dyn_arr_remove_arr(void** dyn_arr, size_t index, size_t count, void* output) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_ASSERT_MSG(index < header->length, "Index out of bounds");
+    NEXUS_ASSERT_MSG(index+count <= header->length, "Index out of bounds");
+
+    void *end = (uint8_t*) (*dyn_arr) + (index+count)*header->element_size;
+    void *dest = (uint8_t*) (*dyn_arr) + index*header->element_size;
+
+    if (output != NULL) {
+        memcpy(output, dest, count*header->element_size);
+    }
+    memmove(dest, end, (header->length - index - count)*header->element_size);
+
+    header->length -= count;
+}
+
+void nexus_dyn_arr_insert(void** dyn_arr, size_t index, const void* value) {
+    nexus_dyn_arr_insert_arr(dyn_arr, index, value, 1);
+}
+
+void nexus_dyn_arr_remove(void** dyn_arr, size_t index, void* output) {
+    nexus_dyn_arr_remove_arr(dyn_arr, index, 1, output); \
+}
+
+void nexus_dyn_arr_insert_fast(void** dyn_arr, size_t index, const void* value) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_ASSERT_MSG(index <= header->length, "Index out of bounds");
+    _dyn_arr_ensure_capacity(dyn_arr, 1);
+
+    void *end = (uint8_t*) (*dyn_arr) + header->length*header->element_size;
+    void *dest = (uint8_t*) (*dyn_arr) + index*header->element_size;
+
+    memcpy(end, dest, header->element_size);
+    if (value == NULL) {
+        memset(dest, 0, header->element_size);
+    } else {
+        memcpy(dest, value, header->element_size);
+    }
+
+    header->length++;
+}
+
+void nexus_dyn_arr_remove_fast(void** dyn_arr, size_t index, void* output) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_ASSERT_MSG(index < header->length, "Index out of bounds");
+
+    void *end = (uint8_t*) (*dyn_arr) + (header->length-1)*header->element_size;
+    void *dest = (uint8_t*) (*dyn_arr) + index*header->element_size;
+
+    if (output != NULL) {
+        memcpy(output, dest, header->element_size);
+    }
+    memcpy(dest, end, header->element_size);
+
+    header->length--;
+}
+
+void nexus_dyn_arr_push(void** dyn_arr, const void* value) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    _dyn_arr_ensure_capacity(dyn_arr, 1);
+
+    void *end = (uint8_t*) (*dyn_arr) + header->length*header->element_size;
+    memcpy(end, value, header->element_size);
+    header->length++;
+}
+
+void nexus_dyn_arr_pop(void** dyn_arr, void* output) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    NEXUS_ASSERT_MSG(header->length > 0, "Index out of bounds");
+
+    if (output != NULL) {
+        void *end = (uint8_t*) (*dyn_arr) + header->length*header->element_size;
+        memcpy(output, end, header->element_size);
+    }
+    header->length++;
 }
