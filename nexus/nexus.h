@@ -105,6 +105,7 @@ struct nexus_arena_t {
 };
 
 extern nexus_arena_t nexus_arena_create(nexus_allocator_t allocator, size_t capacity);
+extern nexus_arena_t nexus_arena_create_from_buffer(uint8_t* buffer, size_t capacity);
 extern void nexus_arena_destroy(nexus_arena_t* arena);
 extern nexus_allocator_t nexus_arena_allocator(nexus_arena_t* arena);
 

@@ -53,6 +53,16 @@ nexus_arena_t nexus_arena_create(nexus_allocator_t allocator, size_t capacity) {
     };
 }
 
+nexus_arena_t nexus_arena_create_from_buffer(uint8_t* buffer, size_t capacity) {
+    return (nexus_arena_t) {
+        .allocator = {0},
+        .memory = buffer,
+        .capacity = capacity,
+        .position = 0,
+        .last_position = 0,
+    };
+}
+
 void nexus_arena_destroy(nexus_arena_t* arena) {
     NEXUS_FREE(arena->allocator, arena->memory, arena->capacity);
     *arena = (nexus_arena_t) {0};
@@ -72,7 +82,9 @@ void* _arena_realloc(void* ptr, size_t old_size, size_t new_size, void* context)
     if ((uintptr_t) arena->memory + arena->last_position == (uintptr_t) ptr) {
         arena->position = arena->last_position;
     }
-    return nexus_arena_push(arena, new_size);
+    void* new_ptr = nexus_arena_push(arena, new_size);
+    memcpy(new_ptr, ptr, old_size);
+    return new_ptr;
 }
 
 void _arena_free(void* ptr, size_t size, void* context) {
@@ -90,13 +102,13 @@ nexus_allocator_t nexus_arena_allocator(nexus_arena_t* arena) {
     };
 }
 
-static size_t _is_power_of_two(size_t value) {
+static bool _is_power_of_two(uintptr_t value) {
     return (value & (value - 1)) == 0;
 }
 
-static size_t _align_up(size_t value, size_t align) {
+static uintptr_t _align_up(uintptr_t value, size_t align) {
     NEXUS_ASSERT(_is_power_of_two(align));
-    size_t mod = value % (align - 1);
+    size_t mod = value & (align - 1);
     if (mod != 0) {
         value += align - mod;
     }
@@ -104,13 +116,15 @@ static size_t _align_up(size_t value, size_t align) {
 }
 
 void* nexus_arena_push_aligned(nexus_arena_t* arena, size_t size, size_t align) {
-    size_t aligned_size = _align_up(size, align);
-    if (arena->position + aligned_size > arena->capacity) {
+    uintptr_t current_ptr = (uintptr_t) arena->memory + arena->last_position;
+    uintptr_t aligned_ptr = _align_up(current_ptr, align);
+    uintptr_t position = aligned_ptr - (uintptr_t) arena->memory;
+    if (position + size > arena->capacity) {
         return NULL;
     }
-    arena->last_position = arena->position;
-    arena->position += aligned_size;
-    return arena->memory + arena->last_position;
+    arena->last_position = position;
+    arena->position = position + size;
+    return &arena->memory[position];
 }
 
 void* nexus_arena_push(nexus_arena_t* arena, size_t size) {
