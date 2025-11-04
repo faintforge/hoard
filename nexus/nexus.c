@@ -139,6 +139,21 @@ void nexus_arena_reset(nexus_arena_t* arena) {
     arena->last_position = 0;
 }
 
+nexus_arena_temp_t nexus_arena_temp_begin(nexus_arena_t* arena) {
+    return (nexus_arena_temp_t) {
+        .arena = arena,
+        .position = arena->position,
+        .last_position = arena->last_position,
+    };
+}
+
+void nexus_arena_temp_end(nexus_arena_temp_t* temp) {
+    nexus_arena_t* arena = temp->arena;
+    arena->position = temp->position;
+    arena->last_position = temp->last_position;
+    *temp = (nexus_arena_temp_t) {0};
+}
+
 // =============================================================================
 // DYNAMIC ARRAY
 // =============================================================================
