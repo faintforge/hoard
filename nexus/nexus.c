@@ -139,19 +139,19 @@ void nexus_arena_reset(nexus_arena_t* arena) {
     arena->last_position = 0;
 }
 
-nexus_arena_temp_t nexus_arena_temp_begin(nexus_arena_t* arena) {
-    return (nexus_arena_temp_t) {
+nexus_arena_scope_t nexus_arena_scope_begin(nexus_arena_t* arena) {
+    return (nexus_arena_scope_t) {
         .arena = arena,
         .position = arena->position,
         .last_position = arena->last_position,
     };
 }
 
-void nexus_arena_temp_end(nexus_arena_temp_t* temp) {
-    nexus_arena_t* arena = temp->arena;
-    arena->position = temp->position;
-    arena->last_position = temp->last_position;
-    *temp = (nexus_arena_temp_t) {0};
+void nexus_arena_scope_end(nexus_arena_scope_t* scope) {
+    nexus_arena_t* arena = scope->arena;
+    arena->position = scope->position;
+    arena->last_position = scope->last_position;
+    *scope = (nexus_arena_scope_t) {0};
 }
 
 // =============================================================================

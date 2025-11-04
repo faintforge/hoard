@@ -114,15 +114,15 @@ extern void* nexus_arena_push(nexus_arena_t* arena, size_t size);
 extern void* nexus_arena_push_aligned(nexus_arena_t* arena, size_t size, size_t align);
 extern void nexus_arena_reset(nexus_arena_t* arena);
 
-typedef struct nexus_arena_temp_t nexus_arena_temp_t;
-struct nexus_arena_temp_t {
+typedef struct nexus_arena_scope_t nexus_arena_scope_t;
+struct nexus_arena_scope_t {
     nexus_arena_t* arena;
     size_t position;
     size_t last_position;
 };
 
-extern nexus_arena_temp_t nexus_arena_temp_begin(nexus_arena_t* arena);
-extern void nexus_arena_temp_end(nexus_arena_temp_t* temp);
+extern nexus_arena_scope_t nexus_arena_scope_begin(nexus_arena_t* arena);
+extern void nexus_arena_scope_end(nexus_arena_scope_t* scope);
 
 // =============================================================================
 // DYNAMIC ARRAY
