@@ -133,6 +133,7 @@ extern void nexus_arena_scope_end(nexus_arena_scope_t* scope);
 extern void* nexus_dyn_arr_create(nexus_allocator_t allocator, size_t element_size);
 extern void nexus_dyn_arr_destroy(void** dyn_arr);
 extern size_t nexus_dyn_arr_length(const void* dyn_arr);
+extern void nexus_dyn_arr_clear(void** dyn_arr);
 
 extern void nexus_dyn_arr_insert_arr(void** dyn_arr, size_t index, const void* arr, size_t arr_length);
 extern void nexus_dyn_arr_remove_arr(void** dyn_arr, size_t index, size_t count, void* output);
@@ -145,6 +146,9 @@ extern void nexus_dyn_arr_remove_fast(void** dyn_arr, size_t index, void* output
 
 extern void nexus_dyn_arr_push(void** dyn_arr, const void* value);
 extern void nexus_dyn_arr_pop(void** dyn_arr, void* output);
+
+extern void nexus_dyn_arr_push_arr(void** dyn_arr, const void* arr, size_t arr_length);
+extern void nexus_dyn_arr_pop_arr(void** dyn_arr, size_t count, void* output);
 
 #ifndef NEXUS_NO_EXTS
 
@@ -179,6 +183,13 @@ extern void nexus_dyn_arr_pop(void** dyn_arr, void* output);
         __typeof__(*(dyn_arr)) result; \
         nexus_dyn_arr_pop((void**) &dyn_arr, &result); \
         result; \
+    })
+
+#define NEXUS_DYN_ARR_PUSH_ARR(dyn_arr, arr, arr_length) ({ \
+        nexus_dyn_arr_push_arr((void**) &dyn_arr, arr, arr_length); \
+    })
+#define NEXUS_DYN_ARR_POP_ARR(dyn_arr, count, result) ({ \
+        nexus_dyn_arr_pop_arr((void**) &dyn_arr, count, result); \
     })
 
 #endif // NEXUS_NO_EXTS

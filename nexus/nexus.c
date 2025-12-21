@@ -119,7 +119,7 @@ static uintptr_t _align_up(uintptr_t value, size_t align) {
 }
 
 void* nexus_arena_push_aligned(nexus_arena_t* arena, size_t size, size_t align) {
-    uintptr_t current_ptr = (uintptr_t) arena->memory + arena->last_position;
+    uintptr_t current_ptr = (uintptr_t) arena->memory + arena->position;
     uintptr_t aligned_ptr = _align_up(current_ptr, align);
     uintptr_t position = aligned_ptr - (uintptr_t) arena->memory;
     if (position + size > arena->capacity) {
@@ -195,7 +195,16 @@ void nexus_dyn_arr_destroy(void** dyn_arr) {
 }
 
 size_t nexus_dyn_arr_length(const void* dyn_arr) {
+    if (dyn_arr == NULL) {
+        return 0;
+    }
     return _dyn_arr_to_header(dyn_arr)->length;
+}
+
+void nexus_dyn_arr_clear(void** dyn_arr) {
+    NEXUS_ASSERT_MSG(*dyn_arr != NULL, "Null pointer dereference");
+    _dyn_arr_header_t* header = _dyn_arr_to_header(*dyn_arr);
+    header->length = 0;
 }
 
 static void _dyn_arr_ensure_capacity(void** dyn_arr, size_t length) {
@@ -208,7 +217,7 @@ static void _dyn_arr_ensure_capacity(void** dyn_arr, size_t length) {
     while (new_capacity < header->length + length) {
         new_capacity *= 2;
     }
-    NEXUS_REALLOC(header->allocator,
+    header = NEXUS_REALLOC(header->allocator,
             header,
             sizeof(_dyn_arr_header_t) + prev_capacity * header->element_size,
             sizeof(_dyn_arr_header_t) + new_capacity * header->element_size);
@@ -310,8 +319,18 @@ void nexus_dyn_arr_pop(void** dyn_arr, void* output) {
     NEXUS_ASSERT_MSG(header->length > 0, "Index out of bounds");
 
     if (output != NULL) {
-        void *end = (uint8_t*) (*dyn_arr) + header->length*header->element_size;
+        void *end = (uint8_t*) (*dyn_arr) + (header->length - 1)*header->element_size;
         memcpy(output, end, header->element_size);
     }
-    header->length++;
+    header->length--;
+}
+
+void nexus_dyn_arr_push_arr(void** dyn_arr, const void* arr, size_t arr_length) {
+    nexus_dyn_arr_insert_arr(dyn_arr, nexus_dyn_arr_length(*dyn_arr), arr, arr_length);
+}
+
+void nexus_dyn_arr_pop_arr(void** dyn_arr, size_t count, void* output) {
+    NEXUS_ASSERT(count <= nexus_dyn_arr_length(*dyn_arr));
+    size_t index = nexus_dyn_arr_length(*dyn_arr) - count;
+    nexus_dyn_arr_remove_arr(dyn_arr, index, count, output);
 }
