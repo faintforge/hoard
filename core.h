@@ -105,9 +105,9 @@ struct arena_t {
     size_t last_position;
 };
 
-extern arena_t arena_create(allocator_t allocator, size_t capacity);
-extern arena_t arena_create_from_buffer(uint8_t* buffer, size_t capacity);
-extern void arena_destroy(arena_t* arena);
+extern arena_t* arena_create(allocator_t allocator, size_t capacity);
+extern arena_t* arena_create_from_buffer(uint8_t* buffer, size_t capacity);
+extern void arena_destroy(arena_t** arena);
 extern allocator_t arena_allocator(arena_t* arena);
 
 extern void* arena_push(arena_t* arena, size_t size);
@@ -198,29 +198,33 @@ void _log_log(log_level_t level, const char* file, int32_t line, const char* mes
 // ARENA ALLOCATOR
 // =============================================================================
 
-arena_t arena_create(allocator_t allocator, size_t capacity) {
-    return (arena_t) {
+arena_t* arena_create(allocator_t allocator, size_t capacity) {
+    arena_t* arena = core_alloc(allocator, capacity);
+    *arena = (arena_t) {
         .allocator = allocator,
-        .memory = core_alloc(allocator, capacity),
+        .memory = (uint8_t*) arena,
         .capacity = capacity,
-        .position = 0,
-        .last_position = 0,
+        .position = sizeof(arena_t),
+        .last_position = sizeof(arena_t),
     };
+    return arena;
 }
 
-arena_t arena_create_from_buffer(uint8_t* buffer, size_t capacity) {
-    return (arena_t) {
+arena_t* arena_create_from_buffer(uint8_t* buffer, size_t capacity) {
+    arena_t* arena = (arena_t*) buffer;
+    *arena = (arena_t) {
         .allocator = {0},
         .memory = buffer,
         .capacity = capacity,
-        .position = 0,
-        .last_position = 0,
+        .position = sizeof(arena_t),
+        .last_position = sizeof(arena_t),
     };
+    return arena;
 }
 
-void arena_destroy(arena_t* arena) {
-    core_free(arena->allocator, arena->memory, arena->capacity);
-    *arena = (arena_t) {0};
+void arena_destroy(arena_t** arena) {
+    core_free((*arena)->allocator, (*arena)->memory, (*arena)->capacity);
+    *arena = NULL;
 }
 
 void* _arena_alloc(size_t size, void* context) {
@@ -287,8 +291,8 @@ void* arena_push(arena_t* arena, size_t size) {
 }
 
 void arena_reset(arena_t* arena) {
-    arena->position = 0;
-    arena->last_position = 0;
+    arena->position = sizeof(arena_t);
+    arena->last_position = sizeof(arena_t);
 }
 
 arena_scope_t arena_scope_begin(arena_t* arena) {
