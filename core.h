@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdbool.h>
-#include <string.h>
 
 // =============================================================================
 // ALLOCATOR INTERFACE
@@ -159,6 +158,14 @@ extern void dyn_arr_pop_arr(void** dyn_arr, size_t count, void* output);
 // HASH MAP
 // =============================================================================
 
+typedef struct hash_map_soa_t hash_map_soa_t;
+struct hash_map_soa_t {
+    void* keys;
+    void* values;
+    uint32_t* hashes;
+    uint8_t* states;
+};
+
 typedef struct hash_map_t hash_map_t;
 struct hash_map_t {
     allocator_t allocator;
@@ -166,11 +173,7 @@ struct hash_map_t {
     uint32_t key_size;
     uint32_t value_size;
 
-    // SoA
-    void* key_array;
-    void* value_array;
-    uint32_t* hash_array;
-    uint8_t* state_array;
+    hash_map_soa_t soa;
 
     bool (*equal_func)(const void* lhs, const void* rhs, uint32_t size);
     uint32_t (*hash_func)(const void* key, uint32_t size);
@@ -217,7 +220,6 @@ extern bool _hm_generic_equal(const void* lhs, const void* rhs, uint32_t size);
 
 #ifdef CORE_IMPLEMENTATION
 
-// TODO: Remove this CRT dependency
 #include <string.h>
 
 // =============================================================================
@@ -588,6 +590,9 @@ void dyn_arr_pop_arr(void** dyn_arr, size_t count, void* output) {
 // HASH MAP
 // =============================================================================
 
+// NOTE: Could try hashing slot keys on the fly instead of caching them. Could
+// reduce memory overhead and perhaps even be faster.
+
 enum {
     _HM_SLOT_EMPTY,
     _HM_SLOT_ALIVE,
@@ -595,11 +600,11 @@ enum {
 };
 
 static inline void* _hm_get_key_ptr(const hash_map_t* map, uint32_t index) {
-    return (uint8_t*) map->key_array + map->key_size*index;
+    return (uint8_t*) map->soa.keys + map->key_size*index;
 }
 
 static inline void* _hm_get_value_ptr(const hash_map_t* map, uint32_t index) {
-    return (uint8_t*) map->value_array + map->value_size*index;
+    return (uint8_t*) map->soa.values + map->value_size*index;
 }
 
 // Call when inserting a new pair into the map.
@@ -612,27 +617,29 @@ static bool _hm_resize_if_needed(hash_map_t* map) {
 
     uint32_t new_capacity = map->capacity * map->grow_factor;
     uint32_t new_count = 0;
-    void* new_key_array = core_alloc(alloc, map->key_size * new_capacity);
-    void* new_value_array = core_alloc(alloc, map->value_size * new_capacity);;
-    uint32_t* new_hash_array = core_alloc(alloc, sizeof(uint32_t) * new_capacity);;
-    uint8_t* new_state_array = core_alloc(alloc, sizeof(uint8_t) * new_capacity);;
+    hash_map_soa_t new_soa = {
+        .keys = core_alloc(alloc, map->key_size * new_capacity),
+        .values = core_alloc(alloc, map->value_size * new_capacity),
+        .hashes = core_alloc(alloc, sizeof(uint32_t) * new_capacity),
+        .states = core_alloc(alloc, sizeof(uint8_t) * new_capacity),
+    };
 
-    memset(new_key_array, 0, map->key_size * new_capacity);
-    memset(new_value_array, 0, map->value_size * new_capacity);
-    memset(new_hash_array, 0, sizeof(uint32_t) * new_capacity);
-    memset(new_state_array, _HM_SLOT_EMPTY, sizeof(uint8_t) * new_capacity);
+    memset(new_soa.keys, 0, map->key_size * new_capacity);
+    memset(new_soa.values, 0, map->value_size * new_capacity);
+    memset(new_soa.hashes, 0, sizeof(uint32_t) * new_capacity);
+    memset(new_soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * new_capacity);
 
     for (uint32_t i = 0; i < map->capacity; i++) {
-        if (map->state_array[i] != _HM_SLOT_ALIVE) {
+        if (map->soa.states[i] != _HM_SLOT_ALIVE) {
             continue;
         }
 
-        uint32_t hash = map->hash_array[i];
+        uint32_t hash = map->soa.hashes[i];
         uint32_t new_index = hash % new_capacity;
 
         // Insert into new SoA
         for (uint32_t j = 0; j < new_capacity; j++) {
-            if (new_state_array[new_index] == _HM_SLOT_EMPTY) {
+            if (new_soa.states[new_index] == _HM_SLOT_EMPTY) {
                 break;
             }
 
@@ -641,27 +648,24 @@ static bool _hm_resize_if_needed(hash_map_t* map) {
             new_index = (new_index + 1) % new_capacity;
         }
 
-        core_assert(new_state_array[new_index] == _HM_SLOT_EMPTY);
+        core_assert(new_soa.states[new_index] == _HM_SLOT_EMPTY);
 
-        void* key_ptr = (uint8_t*) new_key_array + map->key_size * new_index;
-        void* value_ptr = (uint8_t*) new_value_array + map->value_size * new_index;
+        void* key_ptr = (uint8_t*) new_soa.keys + map->key_size * new_index;
+        void* value_ptr = (uint8_t*) new_soa.values + map->value_size * new_index;
         memcpy(key_ptr, _hm_get_key_ptr(map, i), map->key_size);
         memcpy(value_ptr, _hm_get_value_ptr(map, i), map->value_size);
-        new_hash_array[new_index] = hash;
-        new_state_array[new_index] = _HM_SLOT_ALIVE;
+        new_soa.hashes[new_index] = hash;
+        new_soa.states[new_index] = _HM_SLOT_ALIVE;
         new_count++;
     }
 
-    core_free(alloc, map->key_array, map->key_size * map->capacity);
-    core_free(alloc, map->value_array, map->value_size * map->capacity);
-    core_free(alloc, map->hash_array, sizeof(uint32_t) * map->capacity);
-    core_free(alloc, map->state_array, sizeof(uint8_t) * map->capacity);
+    core_free(alloc, map->soa.keys, map->key_size * map->capacity);
+    core_free(alloc, map->soa.values, map->value_size * map->capacity);
+    core_free(alloc, map->soa.hashes, sizeof(uint32_t) * map->capacity);
+    core_free(alloc, map->soa.states, sizeof(uint8_t) * map->capacity);
 
     map->capacity = new_capacity;
-    map->key_array = new_key_array;
-    map->value_array = new_value_array;
-    map->hash_array = new_hash_array;
-    map->state_array = new_state_array;
+    map->soa = new_soa;
     map->count = new_count;
 
     return true;
@@ -692,10 +696,12 @@ hash_map_t hash_map_create(hash_map_desc_t desc) {
         .allocator = alloc,
         .key_size = desc.key_size,
         .value_size = desc.value_size,
-        .key_array = core_alloc(alloc, desc.key_size * desc.initial_capacity),
-        .value_array = core_alloc(alloc, desc.value_size * desc.initial_capacity),
-        .hash_array = core_alloc(alloc, sizeof(uint32_t) * desc.initial_capacity),
-        .state_array = core_alloc(alloc, sizeof(uint8_t) * desc.initial_capacity),
+        .soa = {
+            .keys = core_alloc(alloc, desc.key_size * desc.initial_capacity),
+            .values = core_alloc(alloc, desc.value_size * desc.initial_capacity),
+            .hashes = core_alloc(alloc, sizeof(uint32_t) * desc.initial_capacity),
+            .states = core_alloc(alloc, sizeof(uint8_t) * desc.initial_capacity),
+        },
         .equal_func = desc.equal_func,
         .hash_func = desc.hash_func,
         .capacity = desc.initial_capacity,
@@ -704,20 +710,20 @@ hash_map_t hash_map_create(hash_map_desc_t desc) {
         .grow_factor = desc.grow_factor,
     };
 
-    memset(map.key_array, 0, map.key_size * map.capacity);
-    memset(map.value_array, 0, map.value_size * map.capacity);
-    memset(map.hash_array, 0, sizeof(uint32_t) * map.capacity);
-    memset(map.state_array, _HM_SLOT_EMPTY, sizeof(uint8_t) * map.capacity);
+    memset(map.soa.keys, 0, map.key_size * map.capacity);
+    memset(map.soa.values, 0, map.value_size * map.capacity);
+    memset(map.soa.hashes, 0, sizeof(uint32_t) * map.capacity);
+    memset(map.soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * map.capacity);
 
     return map;
 }
 
 void hash_map_destroy(hash_map_t* map) {
     allocator_t alloc = map->allocator;
-    core_free(alloc, map->key_array, map->key_size * map->capacity);
-    core_free(alloc, map->value_array, map->value_size * map->capacity);
-    core_free(alloc, map->hash_array, sizeof(uint32_t) * map->capacity);
-    core_free(alloc, map->state_array, sizeof(uint8_t) * map->capacity);
+    core_free(alloc, map->soa.keys, map->key_size * map->capacity);
+    core_free(alloc, map->soa.values, map->value_size * map->capacity);
+    core_free(alloc, map->soa.hashes, sizeof(uint32_t) * map->capacity);
+    core_free(alloc, map->soa.states, sizeof(uint8_t) * map->capacity);
     *map = (hash_map_t) {0};
 }
 
@@ -726,14 +732,14 @@ bool hash_map_insert(hash_map_t* map, const void* key, const void* value) {
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             break;
         }
 
         // Key already exists
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             return false;
         }
@@ -744,12 +750,12 @@ bool hash_map_insert(hash_map_t* map, const void* key, const void* value) {
         core_assert(i <= map->capacity);
     }
 
-    core_assert(map->state_array[index] == _HM_SLOT_EMPTY);
+    core_assert(map->soa.states[index] == _HM_SLOT_EMPTY);
 
     memcpy(_hm_get_key_ptr(map, index), key, map->key_size);
     memcpy(_hm_get_value_ptr(map, index), value, map->value_size);
-    map->hash_array[index] = hash;
-    map->state_array[index] = _HM_SLOT_ALIVE;
+    map->soa.hashes[index] = hash;
+    map->soa.states[index] = _HM_SLOT_ALIVE;
     map->count++;
 
     _hm_resize_if_needed(map);
@@ -762,14 +768,14 @@ bool hash_map_set(hash_map_t* map, const void* key, const void* value, void* old
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             break;
         }
 
         // Key already exists
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             break;
         }
@@ -780,16 +786,16 @@ bool hash_map_set(hash_map_t* map, const void* key, const void* value, void* old
         core_assert(i <= map->capacity);
     }
 
-    bool is_unique = map->state_array[index] == _HM_SLOT_EMPTY;
-    if (is_unique && old_value != NULL) {
+    bool is_unique = map->soa.states[index] == _HM_SLOT_EMPTY;
+    if (!is_unique && old_value != NULL) {
         memcpy(old_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
     }
 
     memcpy(_hm_get_value_ptr(map, index), value, map->value_size);
-    map->state_array[index] = _HM_SLOT_ALIVE;
+    map->soa.states[index] = _HM_SLOT_ALIVE;
     if (is_unique) {
         memcpy(_hm_get_key_ptr(map, index), key, map->key_size);
-        map->hash_array[index] = hash;
+        map->soa.hashes[index] = hash;
         map->count++;
     }
 
@@ -803,13 +809,13 @@ bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             return false;
         }
 
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             break;
         }
@@ -820,13 +826,13 @@ bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
         core_assert(i <= map->capacity);
     }
 
-    core_assert(map->state_array[index] == _HM_SLOT_ALIVE);
+    core_assert(map->soa.states[index] == _HM_SLOT_ALIVE);
 
     if (result_value != NULL) {
         memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
     }
 
-    map->state_array[index] = _HM_SLOT_DEAD;
+    map->soa.states[index] = _HM_SLOT_DEAD;
 
     return true;
 }
@@ -836,14 +842,14 @@ bool hash_map_contains(const hash_map_t* map, const void* key) {
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             return false;
         }
 
         // Key exists
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             return true;
         }
@@ -862,14 +868,14 @@ bool hash_map_get(const hash_map_t* map, const void* key, void* result_value) {
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             return false;
         }
 
         // Key exists
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             break;
         }
@@ -880,7 +886,7 @@ bool hash_map_get(const hash_map_t* map, const void* key, void* result_value) {
         core_assert(i <= map->capacity);
     }
 
-    core_assert(map->state_array[index] == _HM_SLOT_ALIVE);
+    core_assert(map->soa.states[index] == _HM_SLOT_ALIVE);
 
     if (result_value != NULL) {
         memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
@@ -894,14 +900,14 @@ void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
     uint32_t index = hash % map->capacity;
     uint32_t i = 0;
     while (true) {
-        uint8_t state = map->state_array[index];
+        uint8_t state = map->soa.states[index];
         if (state == _HM_SLOT_EMPTY) {
             return NULL;
         }
 
         // Key exists
         if (state == _HM_SLOT_ALIVE &&
-            map->hash_array[index] == hash &&
+            map->soa.hashes[index] == hash &&
             map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
             return _hm_get_value_ptr(map, index);
         }
@@ -916,7 +922,7 @@ void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
 }
 
 void hash_map_clear(hash_map_t* map) {
-    memset(map->state_array, _HM_SLOT_EMPTY, sizeof(uint8_t) * map->capacity);
+    memset(map->soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * map->capacity);
     map->count = 0;
 }
 
