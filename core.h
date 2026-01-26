@@ -630,6 +630,33 @@ static void _hm_soa_destroy(hash_map_soa_t* soa, const hash_map_t* map, uint32_t
     core_free(alloc, soa->states, sizeof(uint8_t) * capacity);
 }
 
+// _HM_SLOT_EMPTY means key doesn't exist.
+// _HM_SLOT_ALIVE means key does exist.
+static uint32_t _hm_soa_get_slot(const hash_map_soa_t* soa, uint32_t capacity, const hash_map_t* map, const void* key, uint32_t hash) {
+    uint32_t index = hash % capacity;
+    uint32_t i = 0;
+    while (true) {
+        uint8_t state = soa->states[index];
+        if (state == _HM_SLOT_EMPTY) {
+            return index;
+        }
+
+        // Key already exists
+        if (state == _HM_SLOT_ALIVE &&
+            soa->hashes[index] == hash &&
+            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
+            return index;
+        }
+
+        index = (index + 1) % capacity;
+
+        i++;
+        core_assert(i <= capacity);
+    }
+    core_assert_msg(false, "%s unreacable", __func__);
+    return ~0u;
+}
+
 // Call after inserting a new pair into the map.
 static bool _hm_resize_if_needed(hash_map_t* map) {
     if (map->count < (uint32_t) (map->capacity * map->load_factor / 100.0f)) {
@@ -646,20 +673,9 @@ static bool _hm_resize_if_needed(hash_map_t* map) {
         }
 
         uint32_t hash = map->soa.hashes[i];
-        uint32_t new_index = hash % new_capacity;
-
-        // Insert into new SoA
-        for (uint32_t j = 0; j < new_capacity; j++) {
-            if (new_soa.states[new_index] == _HM_SLOT_EMPTY) {
-                break;
-            }
-
-            // Don't check for duplicate keys since those *shouldn't* exist.
-
-            new_index = (new_index + 1) % new_capacity;
-        }
-
-        core_assert(new_soa.states[new_index] == _HM_SLOT_EMPTY);
+        uint32_t new_index = _hm_soa_get_slot(&new_soa, new_capacity, map, _hm_get_key_ptr(map, i), hash);
+        uint8_t state = new_soa.states[new_index];
+        core_assert(state == _HM_SLOT_EMPTY);
 
         void* key_ptr = (uint8_t*) new_soa.keys + map->key_size * new_index;
         void* value_ptr = (uint8_t*) new_soa.values + map->value_size * new_index;
@@ -723,28 +739,13 @@ void hash_map_destroy(hash_map_t* map) {
 
 bool hash_map_insert(hash_map_t* map, const void* key, const void* value) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            break;
-        }
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
 
-        // Key already exists
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            return false;
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
+    if (state == _HM_SLOT_ALIVE) {
+        return false;
     }
-
-    core_assert(map->soa.states[index] == _HM_SLOT_EMPTY);
 
     memcpy(_hm_get_key_ptr(map, index), key, map->key_size);
     memcpy(_hm_get_value_ptr(map, index), value, map->value_size);
@@ -759,28 +760,11 @@ bool hash_map_insert(hash_map_t* map, const void* key, const void* value) {
 
 bool hash_map_set(hash_map_t* map, const void* key, const void* value, void* old_value) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            break;
-        }
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
 
-        // Key already exists
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            break;
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
-    }
-
-    bool is_unique = map->soa.states[index] == _HM_SLOT_EMPTY;
+    bool is_unique = state == _HM_SLOT_EMPTY;
     if (!is_unique && old_value != NULL) {
         memcpy(old_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
     }
@@ -800,27 +784,13 @@ bool hash_map_set(hash_map_t* map, const void* key, const void* value, void* old
 
 bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            return false;
-        }
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
 
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            break;
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
+    if (state == _HM_SLOT_EMPTY) {
+        return false;
     }
-
-    core_assert(map->soa.states[index] == _HM_SLOT_ALIVE);
 
     if (result_value != NULL) {
         memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
@@ -833,54 +803,21 @@ bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
 
 bool hash_map_contains(const hash_map_t* map, const void* key) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            return false;
-        }
-
-        // Key exists
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            return true;
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
-    }
-    core_assert_msg(false, "Unreacable %s", __func__);
-    return -1;
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
+    return state == _HM_SLOT_ALIVE;
 }
 
 bool hash_map_get(const hash_map_t* map, const void* key, void* result_value) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            return false;
-        }
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
 
-        // Key exists
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            break;
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
+    if (state == _HM_SLOT_EMPTY) {
+        return false;
     }
-
-    core_assert(map->soa.states[index] == _HM_SLOT_ALIVE);
 
     if (result_value != NULL) {
         memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
@@ -891,28 +828,13 @@ bool hash_map_get(const hash_map_t* map, const void* key, void* result_value) {
 
 void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
     uint32_t hash = map->hash_func(key, map->key_size);
-    uint32_t index = hash % map->capacity;
-    uint32_t i = 0;
-    while (true) {
-        uint8_t state = map->soa.states[index];
-        if (state == _HM_SLOT_EMPTY) {
-            return NULL;
-        }
-
-        // Key exists
-        if (state == _HM_SLOT_ALIVE &&
-            map->soa.hashes[index] == hash &&
-            map->equal_func(key, _hm_get_key_ptr(map, index), map->key_size)) {
-            return _hm_get_value_ptr(map, index);
-        }
-
-        index = (index + 1) % map->capacity;
-
-        i++;
-        core_assert(i <= map->capacity);
+    uint32_t index = _hm_soa_get_slot(&map->soa, map->capacity, map, key, hash);
+    uint8_t state = map->soa.states[index];
+    core_assert(state != _HM_SLOT_DEAD);
+    if (state == _HM_SLOT_EMPTY) {
+        return NULL;
     }
-    core_assert_msg(false, "Unreacable %s", __func__);
-    return NULL;
+    return _hm_get_value_ptr(map, index);
 }
 
 void hash_map_clear(hash_map_t* map) {
