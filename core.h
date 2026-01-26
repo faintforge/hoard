@@ -607,27 +607,38 @@ static inline void* _hm_get_value_ptr(const hash_map_t* map, uint32_t index) {
     return (uint8_t*) map->soa.values + map->value_size*index;
 }
 
-// Call when inserting a new pair into the map.
+static hash_map_soa_t _hm_soa_create_zero(const hash_map_t* map, uint32_t capacity) {
+    allocator_t alloc = map->allocator;
+    hash_map_soa_t soa = {
+        .keys = core_alloc(alloc, map->key_size * capacity),
+        .values = core_alloc(alloc, map->value_size * capacity),
+        .hashes = core_alloc(alloc, sizeof(uint32_t) * capacity),
+        .states = core_alloc(alloc, sizeof(uint8_t) * capacity),
+    };
+    memset(soa.keys, 0, map->key_size * capacity);
+    memset(soa.values, 0, map->value_size * capacity);
+    memset(soa.hashes, 0, sizeof(uint32_t) * capacity);
+    memset(soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * capacity);
+    return soa;
+}
+
+static void _hm_soa_destroy(hash_map_soa_t* soa, const hash_map_t* map, uint32_t capacity) {
+    allocator_t alloc = map->allocator;
+    core_free(alloc, soa->keys, map->key_size * capacity);
+    core_free(alloc, soa->values, map->value_size * capacity);
+    core_free(alloc, soa->hashes, sizeof(uint32_t) * capacity);
+    core_free(alloc, soa->states, sizeof(uint8_t) * capacity);
+}
+
+// Call after inserting a new pair into the map.
 static bool _hm_resize_if_needed(hash_map_t* map) {
     if (map->count < (uint32_t) (map->capacity * map->load_factor / 100.0f)) {
         return false;
     }
 
-    allocator_t alloc = map->allocator;
-
     uint32_t new_capacity = map->capacity * map->grow_factor;
     uint32_t new_count = 0;
-    hash_map_soa_t new_soa = {
-        .keys = core_alloc(alloc, map->key_size * new_capacity),
-        .values = core_alloc(alloc, map->value_size * new_capacity),
-        .hashes = core_alloc(alloc, sizeof(uint32_t) * new_capacity),
-        .states = core_alloc(alloc, sizeof(uint8_t) * new_capacity),
-    };
-
-    memset(new_soa.keys, 0, map->key_size * new_capacity);
-    memset(new_soa.values, 0, map->value_size * new_capacity);
-    memset(new_soa.hashes, 0, sizeof(uint32_t) * new_capacity);
-    memset(new_soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * new_capacity);
+    hash_map_soa_t new_soa = _hm_soa_create_zero(map, new_capacity);
 
     for (uint32_t i = 0; i < map->capacity; i++) {
         if (map->soa.states[i] != _HM_SLOT_ALIVE) {
@@ -659,10 +670,7 @@ static bool _hm_resize_if_needed(hash_map_t* map) {
         new_count++;
     }
 
-    core_free(alloc, map->soa.keys, map->key_size * map->capacity);
-    core_free(alloc, map->soa.values, map->value_size * map->capacity);
-    core_free(alloc, map->soa.hashes, sizeof(uint32_t) * map->capacity);
-    core_free(alloc, map->soa.states, sizeof(uint8_t) * map->capacity);
+    _hm_soa_destroy(&map->soa, map, map->capacity);
 
     map->capacity = new_capacity;
     map->soa = new_soa;
@@ -696,12 +704,6 @@ hash_map_t hash_map_create(hash_map_desc_t desc) {
         .allocator = alloc,
         .key_size = desc.key_size,
         .value_size = desc.value_size,
-        .soa = {
-            .keys = core_alloc(alloc, desc.key_size * desc.initial_capacity),
-            .values = core_alloc(alloc, desc.value_size * desc.initial_capacity),
-            .hashes = core_alloc(alloc, sizeof(uint32_t) * desc.initial_capacity),
-            .states = core_alloc(alloc, sizeof(uint8_t) * desc.initial_capacity),
-        },
         .equal_func = desc.equal_func,
         .hash_func = desc.hash_func,
         .capacity = desc.initial_capacity,
@@ -709,21 +711,13 @@ hash_map_t hash_map_create(hash_map_desc_t desc) {
         .load_factor = desc.load_factor,
         .grow_factor = desc.grow_factor,
     };
-
-    memset(map.soa.keys, 0, map.key_size * map.capacity);
-    memset(map.soa.values, 0, map.value_size * map.capacity);
-    memset(map.soa.hashes, 0, sizeof(uint32_t) * map.capacity);
-    memset(map.soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * map.capacity);
+    map.soa = _hm_soa_create_zero(&map, desc.initial_capacity);
 
     return map;
 }
 
 void hash_map_destroy(hash_map_t* map) {
-    allocator_t alloc = map->allocator;
-    core_free(alloc, map->soa.keys, map->key_size * map->capacity);
-    core_free(alloc, map->soa.values, map->value_size * map->capacity);
-    core_free(alloc, map->soa.hashes, sizeof(uint32_t) * map->capacity);
-    core_free(alloc, map->soa.states, sizeof(uint8_t) * map->capacity);
+    _hm_soa_destroy(&map->soa, map, map->capacity);
     *map = (hash_map_t) {0};
 }
 
