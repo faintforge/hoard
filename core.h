@@ -202,6 +202,7 @@ extern bool hash_map_remove(hash_map_t* map, const void* key, void* result_value
 extern bool hash_map_contains(const hash_map_t* map, const void* key);
 extern bool hash_map_get(const hash_map_t* map, const void* key, void* result_value);
 extern void* hash_map_get_ptr(const hash_map_t* map, const void* key);
+extern void hash_map_clear(hash_map_t* map);
 
 #define hash_map_desc_generic(_allocator, key_type, value_type) (hash_map_desc_t) { \
         .allocator = _allocator, \
@@ -912,6 +913,11 @@ void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
     }
     core_assert_msg(false, "Unreacable %s", __func__);
     return NULL;
+}
+
+void hash_map_clear(hash_map_t* map) {
+    memset(map->state_array, _HM_SLOT_EMPTY, sizeof(uint8_t) * map->capacity);
+    map->count = 0;
 }
 
 uint32_t _hm_generic_hash(const void* key, uint32_t size) {
