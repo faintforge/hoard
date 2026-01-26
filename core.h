@@ -166,7 +166,7 @@ struct hash_map_t {
     uint32_t key_size;
     uint32_t value_size;
 
-    // AoS
+    // SoA
     void* key_array;
     void* value_array;
     uint32_t* hash_array;
@@ -787,12 +787,14 @@ bool hash_map_set(hash_map_t* map, const void* key, const void* value, void* old
     memcpy(_hm_get_value_ptr(map, index), value, map->value_size);
     map->state_array[index] = _HM_SLOT_ALIVE;
     if (is_unique) {
+        memcpy(_hm_get_key_ptr(map, index), key, map->key_size);
+        map->hash_array[index] = hash;
         map->count++;
     }
 
     _hm_resize_if_needed(map);
 
-    return true;
+    return is_unique;
 }
 
 bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
