@@ -206,6 +206,7 @@ extern bool hash_map_contains(const hash_map_t* map, const void* key);
 extern bool hash_map_get(const hash_map_t* map, const void* key, void* result_value);
 extern void* hash_map_get_ptr(const hash_map_t* map, const void* key);
 extern void hash_map_clear(hash_map_t* map);
+extern void hash_map_rehash(hash_map_t* map);
 
 #define hash_map_desc_generic(_allocator, key_type, value_type) (hash_map_desc_t) { \
         .allocator = _allocator, \
@@ -657,13 +658,7 @@ static uint32_t _hm_soa_get_slot(const hash_map_soa_t* soa, uint32_t capacity, c
     return ~0u;
 }
 
-// Call after inserting a new pair into the map.
-static bool _hm_resize_if_needed(hash_map_t* map) {
-    if (map->count < (uint32_t) (map->capacity * map->load_factor / 100.0f)) {
-        return false;
-    }
-
-    uint32_t new_capacity = map->capacity * map->grow_factor;
+static void _hm_rehash(hash_map_t* map, uint32_t new_capacity) {
     uint32_t new_count = 0;
     hash_map_soa_t new_soa = _hm_soa_create_zero(map, new_capacity);
 
@@ -691,7 +686,14 @@ static bool _hm_resize_if_needed(hash_map_t* map) {
     map->capacity = new_capacity;
     map->soa = new_soa;
     map->count = new_count;
+}
 
+// Call after inserting a new pair into the map.
+static bool _hm_resize_if_needed(hash_map_t* map) {
+    if (map->count < (uint32_t) (map->capacity * map->load_factor / 100.0f)) {
+        return false;
+    }
+    _hm_rehash(map, map->capacity * map->grow_factor);
     return true;
 }
 
@@ -840,6 +842,10 @@ void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
 void hash_map_clear(hash_map_t* map) {
     memset(map->soa.states, _HM_SLOT_EMPTY, sizeof(uint8_t) * map->capacity);
     map->count = 0;
+}
+
+void hash_map_rehash(hash_map_t* map) {
+    _hm_rehash(map, map->capacity);
 }
 
 uint32_t _hm_generic_hash(const void* key, uint32_t size) {
