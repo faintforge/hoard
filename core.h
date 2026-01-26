@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <string.h>
 
 // =============================================================================
 // ALLOCATOR INTERFACE
@@ -201,6 +202,17 @@ extern bool hash_map_remove(hash_map_t* map, const void* key, void* result_value
 extern bool hash_map_contains(const hash_map_t* map, const void* key);
 extern bool hash_map_get(const hash_map_t* map, const void* key, void* result_value);
 extern void* hash_map_get_ptr(const hash_map_t* map, const void* key);
+
+#define hash_map_desc_generic(_allocator, key_type, value_type) (hash_map_desc_t) { \
+        .allocator = _allocator, \
+        .key_size = sizeof(key_type), \
+        .value_size = sizeof(value_type), \
+        .hash_func = _hm_generic_hash, \
+        .equal_func = _hm_generic_equal, \
+    }
+
+extern uint32_t _hm_generic_hash(const void* key, uint32_t size);
+extern bool _hm_generic_equal(const void* lhs, const void* rhs, uint32_t size);
 
 #ifdef CORE_IMPLEMENTATION
 
@@ -663,7 +675,7 @@ hash_map_t hash_map_create(hash_map_desc_t desc) {
         desc.load_factor = 80;
     }
     if (desc.grow_factor == 0.0f) {
-        desc.load_factor = 2.0f;
+        desc.grow_factor = 2.0f;
     }
 
     core_assert(desc.allocator.alloc != NULL);
@@ -898,6 +910,14 @@ void* hash_map_get_ptr(const hash_map_t* map, const void* key) {
     }
     core_assert_msg(false, "Unreacable %s", __func__);
     return NULL;
+}
+
+uint32_t _hm_generic_hash(const void* key, uint32_t size) {
+    return fvn1a_hash32(0, key, size);
+}
+
+bool _hm_generic_equal(const void* lhs, const void* rhs, uint32_t size) {
+    return memcmp(lhs, rhs, size) == 0;
 }
 
 #endif // CORE_IMPLEMENTATION
