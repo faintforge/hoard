@@ -216,9 +216,18 @@ extern void hash_map_rehash(hash_map_t* map);
         .equal_func = _hm_generic_equal, \
     }
 
+typedef int32_t hash_map_iter_t;
+
+extern hash_map_iter_t hash_map_iter_begin(const hash_map_t* map);
+extern hash_map_iter_t hash_map_iter_next(const hash_map_t* map, hash_map_iter_t iter);
+extern bool hash_map_iter_valid(const hash_map_t* map, hash_map_iter_t iter);
+extern bool hash_map_iter_get(const hash_map_t* map, hash_map_iter_t iter, void* result_value);
+extern void* hash_map_iter_get_ptr(const hash_map_t* map, hash_map_iter_t iter);
+
 extern uint32_t _hm_generic_hash(const void* key, uint32_t size);
 extern bool _hm_generic_equal(const void* lhs, const void* rhs, uint32_t size);
 
+#define CORE_IMPLEMENTATION
 #ifdef CORE_IMPLEMENTATION
 
 #include <string.h>
@@ -795,7 +804,7 @@ bool hash_map_remove(hash_map_t* map, const void* key, void* result_value) {
     }
 
     if (result_value != NULL) {
-        memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
+        memcpy(result_value, _hm_get_value_ptr(map, index), map->value_size);
     }
 
     map->soa.states[index] = _HM_SLOT_DEAD;
@@ -822,7 +831,7 @@ bool hash_map_get(const hash_map_t* map, const void* key, void* result_value) {
     }
 
     if (result_value != NULL) {
-        memcpy(result_value, _hm_get_value_ptr(map, index), sizeof(map->value_size));
+        memcpy(result_value, _hm_get_value_ptr(map, index), map->value_size);
     }
 
     return true;
@@ -846,6 +855,42 @@ void hash_map_clear(hash_map_t* map) {
 
 void hash_map_rehash(hash_map_t* map) {
     _hm_rehash(map, map->capacity);
+}
+
+hash_map_iter_t hash_map_iter_begin(const hash_map_t* map) {
+    return hash_map_iter_next(map, -1);
+}
+
+hash_map_iter_t hash_map_iter_next(const hash_map_t* map, hash_map_iter_t iter) {
+    iter++;
+    while ((uint32_t) iter < map->capacity) {
+        if (map->soa.states[iter] == _HM_SLOT_ALIVE) {
+            break;
+        }
+        iter++;
+    }
+    return iter;
+}
+
+bool hash_map_iter_valid(const hash_map_t* map, hash_map_iter_t iter) {
+    return (uint32_t) iter < map->capacity && map->soa.states[iter] == _HM_SLOT_ALIVE;
+}
+
+bool hash_map_iter_get(const hash_map_t* map, hash_map_iter_t iter, void* result_value) {
+    if (!hash_map_iter_valid(map, iter)) {
+        return false;
+    }
+    if (result_value != NULL) {
+        memcpy(result_value, _hm_get_value_ptr(map, iter), sizeof(map->value_size));
+    }
+    return true;
+}
+
+void* hash_map_iter_get_ptr(const hash_map_t* map, hash_map_iter_t iter) {
+    if (!hash_map_iter_valid(map, iter)) {
+        return NULL;
+    }
+    return _hm_get_value_ptr(map, iter);
 }
 
 uint32_t _hm_generic_hash(const void* key, uint32_t size) {
