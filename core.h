@@ -227,7 +227,6 @@ extern void* hash_map_iter_get_ptr(const hash_map_t* map, hash_map_iter_t iter);
 extern uint32_t _hm_generic_hash(const void* key, uint32_t size);
 extern bool _hm_generic_equal(const void* lhs, const void* rhs, uint32_t size);
 
-#define CORE_IMPLEMENTATION
 #ifdef CORE_IMPLEMENTATION
 
 #include <string.h>
@@ -570,7 +569,11 @@ void dyn_arr_push(void** dyn_arr, const void* value) {
     header = _dyn_arr_to_header(*dyn_arr);
 
     void *end = (uint8_t*) (*dyn_arr) + header->length*header->element_size;
-    memcpy(end, value, header->element_size);
+    if (value == NULL) {
+        memset(end, 0, header->element_size);
+    } else {
+        memcpy(end, value, header->element_size);
+    }
     header->length++;
 }
 
